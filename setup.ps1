@@ -27,4 +27,3 @@ switch ($choice) {
     default {
         Write-Host "`nInvalid choice. Please run the script again." -ForegroundColor Red
     }
-}
