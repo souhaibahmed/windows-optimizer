@@ -1,154 +1,208 @@
-# Windows Optimizer - by souhaibahmed
-# Usage: irm https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main/setup.ps1 | iex
+# ================================================================================
+#  Windows Optimizer - Setup & Entry Point
+#  by souhaibahmed
+#  Usage: irm https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main/setup.ps1 | iex
+# ================================================================================
 
-$base = "https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main"
-$tempFile = "$env:TEMP\wo_sysinfo.tmp"
+# ── Enforce TLS 1.2 for all web requests ─────────────────────────────────────
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# =============================================
-#           SYSTEM DETECTION
-# =============================================
+$BASE_URL  = "https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main"
+$TEMP_FILE = "$env:TEMP\wopt_session.json"
 
-function Detect-System {
-    $info = @{}
+# ── UI Helpers ────────────────────────────────────────────────────────────────
+function Write-OK($msg)   { Write-Host "  [+] $msg" -ForegroundColor Green   }
+function Write-Warn($msg) { Write-Host "  [!] $msg" -ForegroundColor Yellow  }
+function Write-Info($msg) { Write-Host "  [~] $msg" -ForegroundColor Cyan    }
+function Write-Err($msg)  { Write-Host "  [X] $msg" -ForegroundColor Red     }
+function Write-Dim($msg)  { Write-Host "      $msg" -ForegroundColor DarkGray }
 
-    # --- Windows Version ---
-    $build = [System.Environment]::OSVersion.Version.Build
-    if ($build -ge 22000) {
-        $info.WindowsVersion = "Windows 11"
-    } elseif ($build -ge 10240) {
-        $info.WindowsVersion = "Windows 10"
-    } else {
-        $info.WindowsVersion = "Unknown"
-    }
-    $info.BuildNumber = $build
-
-    # --- Architecture ---
-    $info.Architecture = if ([System.Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-
-    # --- winget ---
-    $wingetPath = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetPath) {
-        $info.WingetAvailable = $true
-    } else {
-        # Try to enable winget via App Installer (Windows 10/11)
-        $info.WingetAvailable = $false
-        try {
-            $appInstaller = Get-AppxPackage -Name "Microsoft.DesktopAppInstaller" -ErrorAction SilentlyContinue
-            if ($appInstaller) {
-                Add-AppxPackage -RegisterByFamilyName -MainPackage $appInstaller.PackageFamilyName -ErrorAction SilentlyContinue
-                # Re-check after enabling
-                $wingetPath = Get-Command winget -ErrorAction SilentlyContinue
-                if ($wingetPath) { $info.WingetAvailable = $true }
-            }
-        } catch {}
-    }
-
-    # --- Chocolatey ---
-    $chocoPath = Get-Command choco -ErrorAction SilentlyContinue
-    $info.ChocoAvailable = $null -ne $chocoPath
-
-    # --- Scoop ---
-    $scoopPath = Get-Command scoop -ErrorAction SilentlyContinue
-    $info.ScoopAvailable = $null -ne $scoopPath
-
-    # --- Admin Rights ---
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    $info.IsAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-    return $info
+function Show-Banner {
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ╔══════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "  ║                                              ║" -ForegroundColor Cyan
+    Write-Host "  ║         W I N D O W S  O P T I M I Z E R   ║" -ForegroundColor Cyan
+    Write-Host "  ║                  v 2 . 0                    ║" -ForegroundColor Cyan
+    Write-Host "  ║                                              ║" -ForegroundColor Cyan
+    Write-Host "  ║              by  souhaibahmed               ║" -ForegroundColor Cyan
+    Write-Host "  ║                                              ║" -ForegroundColor Cyan
+    Write-Host "  ╚══════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
 }
 
-# =============================================
-#           SHOW DETECTION RESULTS
-# =============================================
+# ── 1. Admin check ────────────────────────────────────────────────────────────
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
 
-function Show-SysInfo ($info) {
-    $wingetStatus  = if ($info.WingetAvailable)  { "[OK]" } else { "[X]" }
-    $chocoStatus   = if ($info.ChocoAvailable)   { "[OK]" } else { "[X]" }
-    $scoopStatus   = if ($info.ScoopAvailable)   { "[OK]" } else { "[X]" }
-    $adminStatus   = if ($info.IsAdmin)           { "[OK]" } else { "[!!] NOT Admin - some steps may fail" }
-
-    Write-Host " System   : $($info.WindowsVersion) (Build $($info.BuildNumber)) [$($info.Architecture)]" -ForegroundColor White
-    Write-Host " winget   : $wingetStatus" -ForegroundColor $(if ($info.WingetAvailable) { "Green" } else { "Red" })
-    Write-Host " Chocolatey: $chocoStatus" -ForegroundColor $(if ($info.ChocoAvailable) { "Green" } else { "DarkGray" })
-    Write-Host " Scoop    : $scoopStatus" -ForegroundColor $(if ($info.ScoopAvailable) { "Green" } else { "DarkGray" })
-    Write-Host " Admin    : $adminStatus" -ForegroundColor $(if ($info.IsAdmin) { "Green" } else { "Yellow" })
+if (-not $isAdmin) {
+    Show-Banner
+    Write-Err "This script must be run as Administrator."
+    Write-Dim "Right-click PowerShell → Run as Administrator, then try again."
+    Write-Host ""
+    pause
+    exit 1
 }
 
-# =============================================
-#           SAVE TEMP FILE
-# =============================================
-
-function Save-TempInfo ($info) {
-    $lines = @(
-        "WindowsVersion=$($info.WindowsVersion)",
-        "BuildNumber=$($info.BuildNumber)",
-        "Architecture=$($info.Architecture)",
-        "WingetAvailable=$($info.WingetAvailable)",
-        "ChocoAvailable=$($info.ChocoAvailable)",
-        "ScoopAvailable=$($info.ScoopAvailable)",
-        "IsAdmin=$($info.IsAdmin)"
-    )
-    $lines | Set-Content -Path $tempFile -Encoding UTF8
-}
-
-# =============================================
-#           CLEANUP TEMP FILE
-# =============================================
-
-function Cleanup-TempFile {
-    if (Test-Path $tempFile) {
-        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# =============================================
-#           MAIN UI
-# =============================================
-
-Clear-Host
-
-Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║         Windows Optimizer  v2.0          ║" -ForegroundColor Cyan
-Write-Host "  ║              by souhaibahmed             ║" -ForegroundColor DarkCyan
-Write-Host "  ╚══════════════════════════════════════════╝" -ForegroundColor Cyan
-Write-Host ""
+# ── 2. Show banner + scanning message ────────────────────────────────────────
+Show-Banner
 Write-Host "  Scanning your system..." -ForegroundColor DarkGray
 Write-Host ""
 
-$sysInfo = Detect-System
-Save-TempInfo $sysInfo
+# ── 3. Detect Windows version ─────────────────────────────────────────────────
+$osInfo      = Get-CimInstance -ClassName Win32_OperatingSystem
+$buildNumber = [int]$osInfo.BuildNumber
+$osCaption   = $osInfo.Caption.Trim()
 
-Write-Host "  ┌──────────────────────────────────────────┐" -ForegroundColor DarkCyan
-Write-Host "  │  System Info                             │" -ForegroundColor DarkCyan
-Write-Host "  └──────────────────────────────────────────┘" -ForegroundColor DarkCyan
-Show-SysInfo $sysInfo
+if ($buildNumber -ge 22000) {
+    $winVersion = "Windows 11"
+} elseif ($buildNumber -ge 10240) {
+    $winVersion = "Windows 10"
+} else {
+    Write-Err "Unsupported OS. This tool supports Windows 10 and Windows 11 only."
+    pause; exit 1
+}
+
+Write-OK "OS detected: $osCaption (Build $buildNumber)"
+
+# ── 4. Check PowerShell version ───────────────────────────────────────────────
+$psVer = $PSVersionTable.PSVersion.Major
+if ($psVer -ge 5) {
+    Write-OK "PowerShell version: $psVer"
+} else {
+    Write-Warn "PowerShell $psVer is outdated. Version 5 or higher is recommended."
+}
+
+# ── 5. Check & fix Execution Policy ──────────────────────────────────────────
+$execPolicy = Get-ExecutionPolicy -Scope CurrentUser
+if ($execPolicy -in @('Restricted', 'AllSigned')) {
+    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force -ErrorAction SilentlyContinue
+    Write-OK "Execution policy updated to: RemoteSigned"
+} else {
+    Write-OK "Execution policy: $execPolicy"
+}
+
+# ── 6. Check & attempt to enable winget ───────────────────────────────────────
+$wingetAvailable = $false
+$wingetVersion   = "N/A"
+
+# First try: direct call
+try {
+    $wgRaw = winget --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $wingetAvailable = $true
+        $wingetVersion   = ($wgRaw | Out-String).Trim()
+    }
+} catch { }
+
+# Second try: re-register App Installer if not found
+if (-not $wingetAvailable) {
+    Write-Warn "winget not found. Trying to activate it..."
+    try {
+        $aiPkg = Get-AppxPackage -AllUsers -Name 'Microsoft.DesktopAppInstaller' -ErrorAction SilentlyContinue
+        if ($aiPkg) {
+            Add-AppxPackage -DisableDevelopmentMode -Register "$($aiPkg.InstallLocation)\AppxManifest.xml" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $wgRaw2 = winget --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $wingetAvailable = $true
+                $wingetVersion   = ($wgRaw2 | Out-String).Trim()
+                Write-OK "winget activated: $wingetVersion"
+            }
+        }
+    } catch { }
+
+    if (-not $wingetAvailable) {
+        Write-Warn "winget could not be enabled automatically."
+        Write-Dim "Install 'App Installer' from the Microsoft Store to use the app-install feature."
+    }
+} else {
+    Write-OK "winget: $wingetVersion"
+}
+
+# ── 7. Check Chocolatey (optional) ───────────────────────────────────────────
+$chocoAvailable = $false
+try {
+    $chocoRaw = choco --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $chocoAvailable = $true
+        Write-OK "Chocolatey: $($chocoRaw.ToString().Trim())"
+    }
+} catch { }
+
+if (-not $chocoAvailable) {
+    Write-Info "Chocolatey: not installed (optional)"
+}
+
+# ── 8. Detect hardware ────────────────────────────────────────────────────────
+$gpuObj    = Get-CimInstance -ClassName Win32_VideoController | Select-Object -First 1
+$gpuName   = $gpuObj.Name
+
+$gpuVendor = switch -Regex ($gpuName) {
+    "NVIDIA"       { "NVIDIA" }
+    "AMD|Radeon"   { "AMD"    }
+    "Intel"        { "Intel"  }
+    default        { "Unknown" }
+}
+
+$ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+
+Write-OK "GPU: $gpuName ($gpuVendor)"
+Write-OK "RAM: ${ramGB} GB"
+
+# ── 9. Save session info to temp file ─────────────────────────────────────────
+$sessionData = [ordered]@{
+    WinVersion      = $winVersion
+    BuildNumber     = $buildNumber
+    OsCaption       = $osCaption
+    PsVersion       = $psVer
+    WingetAvailable = $wingetAvailable
+    WingetVersion   = $wingetVersion
+    ChocoAvailable  = $chocoAvailable
+    GpuName         = $gpuName
+    GpuVendor       = $gpuVendor
+    RamGB           = $ramGB
+    CreatedAt       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+}
+
+try {
+    $sessionData | ConvertTo-Json -Depth 3 | Out-File -FilePath $TEMP_FILE -Encoding UTF8 -Force
+} catch {
+    Write-Warn "Could not write session file. Some features may fall back to defaults."
+}
+
+# ── 10. Main menu ─────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "  ══════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  ────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "   [1]  Optimize This PC" -ForegroundColor Green
+Write-Host "  [1]  Optimize This PC" -ForegroundColor Green
 Write-Host ""
-Write-Host "  ══════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  [0]  Exit" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  ────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host ""
 
 $choice = Read-Host "  Enter your choice"
 
-switch ($choice.Trim()) {
+switch ($choice) {
     "1" {
         Write-Host ""
-        Write-Host "  Loading Optimizer..." -ForegroundColor Green
+        Write-Info "Loading Optimizer module..."
         Write-Host ""
-        try {
-            iex (irm "$base/optimize.ps1")
-        } finally {
-            Cleanup-TempFile
-        }
+        iex (irm "$BASE_URL/optimize.ps1")
+    }
+    "0" {
+        Write-Host ""
+        Write-Host "  Goodbye!" -ForegroundColor DarkGray
+        Write-Host ""
     }
     default {
-        Write-Host ""
-        Write-Host "  Invalid choice. Please run the script again." -ForegroundColor Red
-        Cleanup-TempFile
+        Write-Err "Invalid choice. Run the script again."
     }
+}
+
+# ── Cleanup: delete temp session file ────────────────────────────────────────
+if (Test-Path $TEMP_FILE) {
+    Remove-Item $TEMP_FILE -Force -ErrorAction SilentlyContinue
 }
