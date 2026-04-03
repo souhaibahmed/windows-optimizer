@@ -126,7 +126,8 @@ if ($Session.ChocoAvailable) {
 }
 Write-Host ""
 
-Write-Host "  [1] Optimize This PC" -ForegroundColor Green
+Write-Host "  [1] Optimize This PC (Console)" -ForegroundColor Green
+Write-Host "  [2] Open GUI Version" -ForegroundColor Green
 Write-Host ""
 Write-Host "  [0] Exit" -ForegroundColor DarkGray
 Write-Host ""
@@ -140,6 +141,13 @@ switch ($choice) {
         Start-Sleep -Milliseconds 500
         $optimizeUrl = "https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main/optimize.ps1"
         iex(irm $optimizeUrl)
+    }
+    "2" {
+        Write-Host ""
+        Write-Custom "[>>] Loading GUI version..." "Yellow"
+        Start-Sleep -Milliseconds 500
+        $guiUrl = "https://raw.githubusercontent.com/souhaibahmed/windows-optimizer/main/WindowsOptimizerGUI.ps1"
+        iex(irm $guiUrl)
     }
     "0" {
         if (Test-Path $sessionFile) {
